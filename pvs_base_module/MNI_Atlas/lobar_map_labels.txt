@@ -1,0 +1,13 @@
+label_LH_F = [28,50:2:58,68,70,72,76,78,80]; % Hammers LH Frontal =1
+label_RH_F = [29,51:2:59,69,71,73,77,79,81]; % Hammers RH Frontal =2
+
+label_LH_P = [60,62,32]; % Hammers LH Parietal =3
+label_RH_P = [61,63,33]; % Hammers RH Parietal =4
+
+label_LH_T = [2:2:16,30,82]; % Hammers LH Temporal =17
+label_RH_T = [1:2:15,31,83]; % Hammers RH Temporal =18
+
+label_LH_O = [64,66,22]; % Hammers LH Occipital =7
+label_RH_O = [65,67,23]; % Hammers RH Occipital =8
+
+label_BG = [34:1:43]; % Hammers BG =9
