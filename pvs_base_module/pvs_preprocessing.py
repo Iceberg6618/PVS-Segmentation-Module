@@ -85,6 +85,7 @@ class PVSPreprocessing:
     def __init__(
         self,
         t2_nib: nib.Nifti1Image,
+        t1_nib: nib.Nifti1Image | None = None,
         mni_src=os.path.join(os.path.dirname(__file__), "MNI_Atlas"),
         out_dir=None,
         save=True,
@@ -96,6 +97,11 @@ class PVSPreprocessing:
         self.t2_nib.header["qform_code"] = 1
         self.t2_ants = _ants_image_from_nifti(self.t2_nib)
         self.img_np_arr = self.t2_nib.get_fdata()
+        self.t1_nib = t1_nib
+        self.t1_ants = None
+        if self.t1_nib is not None:
+            self.t1_nib.header["qform_code"] = 1
+            self.t1_ants = _ants_image_from_nifti(self.t1_nib)
 
         self.out_dir = out_dir if out_dir is not None else "./preproc"
         os.makedirs(self.out_dir, exist_ok=True)
@@ -118,6 +124,7 @@ class PVSPreprocessing:
         self.normalization_mask = None
         self.int_norm_nib = None
         self.t2_normalized = None
+        self.t1_to_t2_nib = None
 
     def synthseg(self) -> np.ndarray:
         """
@@ -132,13 +139,54 @@ class PVSPreprocessing:
             return nib.load(cache_path).get_fdata().squeeze().astype(np.uint8)
 
         runner = self.synthseg_runner or NativeSynthSegRunner.get(self.synthseg_config)
-        synthseg_native_nib = runner.run_native(
-            self.t2_nib,
-            output_path=cache_path if (self.save or self.overwrite) else None,
-            overwrite=True,
-        )
+        if self.t1_nib is None:
+            synthseg_native_nib = runner.run_native(
+                self.t2_nib,
+                output_path=cache_path if (self.save or self.overwrite) else None,
+                overwrite=True,
+            )
+        else:
+            synthseg_native_nib = self._synthseg_from_t1_to_t2(runner, cache_path)
 
         return synthseg_native_nib.get_fdata().squeeze().astype(np.uint8)
+
+    def _synthseg_from_t1_to_t2(
+        self,
+        runner: NativeSynthSegRunner,
+        cache_path: str,
+    ) -> nib.Nifti1Image:
+        t1_seg_nib = runner.run_native(self.t1_nib, output_path=None, overwrite=True)
+
+        t1_to_t2 = ants.registration(
+            fixed=self.t2_ants,
+            moving=self.t1_ants,
+            type_of_transform="Affine",
+            verbose=False,
+        )
+        self.t1_to_t2_nib = _nifti_from_ants_image(
+            ants.apply_transforms(
+                fixed=self.t2_ants,
+                moving=self.t1_ants,
+                transformlist=t1_to_t2["fwdtransforms"],
+                interpolator="linear",
+            )
+        )
+
+        t1_seg_ants = _ants_image_from_nifti(t1_seg_nib)
+        synthseg_t2_ants = ants.apply_transforms(
+            fixed=self.t2_ants,
+            moving=t1_seg_ants,
+            transformlist=t1_to_t2["fwdtransforms"],
+            interpolator="genericLabel",
+        )
+        synthseg_t2_nib = _nifti_from_ants_image(synthseg_t2_ants)
+        synthseg_t2_nib.header["qform_code"] = 1
+
+        if self.save or self.overwrite:
+            nib.save(synthseg_t2_nib, cache_path)
+            nib.save(self.t1_to_t2_nib, os.path.join(self.out_dir, "t1_to_t2.nii.gz"))
+
+        return synthseg_t2_nib
 
     def lobar_segmentation(self) -> np.ndarray:
         cache_path = os.path.join(self.out_dir, "native_lobe.nii.gz")
@@ -221,6 +269,10 @@ class PVSPreprocessing:
         if self.save:
             nib.save(self.int_norm_nib, os.path.join(self.out_dir, "t2_norm.nii.gz"))
             nib.save(self.t2_nib, os.path.join(self.out_dir, "t2_raw.nii.gz"))
+            if self.t1_nib is not None:
+                nib.save(self.t1_nib, os.path.join(self.out_dir, "t1_raw.nii.gz"))
+                if self.t1_to_t2_nib is not None:
+                    nib.save(self.t1_to_t2_nib, os.path.join(self.out_dir, "t1_to_t2.nii.gz"))
 
         return self.int_norm_nib
 
