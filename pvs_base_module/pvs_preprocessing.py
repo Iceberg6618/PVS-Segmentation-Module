@@ -136,8 +136,10 @@ class PVSPreprocessing:
         cache_path = os.path.join(self.out_dir, "native_synthseg.nii.gz")
 
         if os.path.exists(cache_path) and not self.overwrite:
+            print(f"[PVS][Preproc] native_synthseg exists. Loading file: {cache_path}")
             return nib.load(cache_path).get_fdata().squeeze().astype(np.uint8)
 
+        print("[PVS][Preproc] SynthSeg started.")
         runner = self.synthseg_runner or NativeSynthSegRunner.get(self.synthseg_config)
         if self.t1_nib is None:
             synthseg_native_nib = runner.run_native(
@@ -148,6 +150,7 @@ class PVSPreprocessing:
         else:
             synthseg_native_nib = self._synthseg_from_t1_to_t2(runner, cache_path)
 
+        print(f"[PVS][Preproc] SynthSeg done: {cache_path}")
         return synthseg_native_nib.get_fdata().squeeze().astype(np.uint8)
 
     def _synthseg_from_t1_to_t2(
@@ -155,7 +158,9 @@ class PVSPreprocessing:
         runner: NativeSynthSegRunner,
         cache_path: str,
     ) -> nib.Nifti1Image:
+        print("[PVS][Preproc] T1 SynthSeg started.")
         t1_seg_nib = runner.run_native(self.t1_nib, output_path=None, overwrite=True)
+        print("[PVS][Preproc] T1-to-T2 registration started.")
 
         t1_to_t2 = ants.registration(
             fixed=self.t2_ants,
@@ -185,6 +190,7 @@ class PVSPreprocessing:
         if self.save or self.overwrite:
             nib.save(synthseg_t2_nib, cache_path)
             nib.save(self.t1_to_t2_nib, os.path.join(self.out_dir, "t1_to_t2.nii.gz"))
+        print("[PVS][Preproc] T1 SynthSeg registered to T2 native space done.")
 
         return synthseg_t2_nib
 
@@ -192,8 +198,10 @@ class PVSPreprocessing:
         cache_path = os.path.join(self.out_dir, "native_lobe.nii.gz")
 
         if os.path.exists(cache_path) and not self.overwrite:
+            print(f"[PVS][Preproc] native_lobe exists. Loading file: {cache_path}")
             return nib.load(cache_path).get_fdata().squeeze().astype(np.uint8)
 
+        print("[PVS][Preproc] MNI lobe registration started.")
         mni_t2 = ants.image_read(
             os.path.join(
                 self.mni_src,
@@ -220,10 +228,12 @@ class PVSPreprocessing:
 
         if self.save or self.overwrite:
             nib.save(native_lobe_nib, cache_path)
+        print(f"[PVS][Preproc] MNI lobe registration done: {cache_path}")
 
         return native_lobe_nib.get_fdata().squeeze().astype(np.uint8)
 
     def get_masks(self):
+        print("[PVS][Preproc] Mask generation started.")
         if self.native_synthseg is None:
             raise RuntimeError("native_synthseg is None. Call synthseg() first.")
         if self.native_lobe is None:
@@ -258,11 +268,16 @@ class PVSPreprocessing:
             affine, header = self.t2_nib.affine, self.t2_nib.header
             nib.save(nib.Nifti1Image(brain_mask, affine, header), os.path.join(self.out_dir, "brain_mask.nii.gz"))
             nib.save(nib.Nifti1Image(roi_mask, affine, header), os.path.join(self.out_dir, "native_roi_mask.nii.gz"))
+        print(
+            f"[PVS][Preproc] Mask generation done | brain={int(brain_mask.sum())}, "
+            f"roi={int(np.count_nonzero(roi_mask))}"
+        )
 
         return brain_mask, roi_mask, exclusion_mask
 
     def intensity_normalization(self, qmin: float = 0, qmax: float = 99) -> nib.Nifti1Image:
         assert self.mask is not None, "unable to process intensity normalization without mask..."
+        print(f"[PVS][Preproc] Intensity normalization started | qmin={qmin}, qmax={qmax}")
         img_norm = self._normalize_with_mask(qmin=qmin, qmax=qmax, clip_upper=False)
         self.int_norm_nib = nib.Nifti1Image(img_norm, self.t2_nib.affine, self.t2_nib.header)
 
@@ -273,6 +288,7 @@ class PVSPreprocessing:
                 nib.save(self.t1_nib, os.path.join(self.out_dir, "t1_raw.nii.gz"))
                 if self.t1_to_t2_nib is not None:
                     nib.save(self.t1_to_t2_nib, os.path.join(self.out_dir, "t1_to_t2.nii.gz"))
+        print(f"[PVS][Preproc] Intensity normalization done: {os.path.join(self.out_dir, 't2_norm.nii.gz')}")
 
         return self.int_norm_nib
 
@@ -303,7 +319,9 @@ class PVSPreprocessing:
         return saved_paths
 
     def run_all_preprocesses(self):
+        print(f"[PVS][Preproc] Full preprocessing pipeline started | out={self.out_dir}")
         self.native_synthseg = self.synthseg()
         self.native_lobe = self.lobar_segmentation()
         self.brain_mask, self.target_roi_mask, self.exclusion_mask = self.get_masks()
         self.t2_normalized = self.intensity_normalization()
+        print("[PVS][Preproc] Full preprocessing pipeline done.")

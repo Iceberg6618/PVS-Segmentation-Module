@@ -98,21 +98,29 @@ def frangi2d(
     mode="reflect",
     cval=0,
     mask=None,
+    slice_axis: int = 2,
 ) -> np.ndarray:
-    """Apply Frangi filtering independently to every axial slice."""
+    """Apply Frangi filtering independently along the requested slice axis."""
     image = image.astype(_supported_float_type(image.dtype), copy=False)
+    slice_axis = int(slice_axis)
+    if slice_axis < 0:
+        slice_axis += image.ndim
+    if image.ndim != 3 or slice_axis not in (0, 1, 2):
+        raise ValueError("frangi2d expects a 3-D image and slice_axis in {0, 1, 2}.")
 
     if not black_ridges:
         image = -image
 
     mask_arr = np.asarray(mask) if mask is not None else np.ones_like(image)
-    filtered_max = np.zeros_like(image)
+    image_work = np.moveaxis(image, slice_axis, 2)
+    mask_work = np.moveaxis(mask_arr, slice_axis, 2)
+    filtered_max = np.zeros_like(image_work)
 
     for sigma in sigmas:
-        eigvals = np.zeros((2,) + image.shape, dtype=image.dtype)
-        for i in range(image.shape[2]):
+        eigvals = np.zeros((2,) + image_work.shape, dtype=image_work.dtype)
+        for i in range(image_work.shape[2]):
             eigvals[:, :, :, i] = hessian_matrix_eigvals(
-                hessian_matrix(image[:, :, i], sigma, mode=mode, cval=cval)
+                hessian_matrix(image_work[:, :, i], sigma, mode=mode, cval=cval)
             )
 
         eigvals = np.take_along_axis(eigvals, np.abs(eigvals).argsort(0), axis=0)
@@ -123,15 +131,15 @@ def frangi2d(
         s = np.sqrt((eigvals**2).sum(axis=0))
 
         if gamma is None:
-            gamma = (s * mask_arr).max() / 2
+            gamma = (s * mask_work).max() / 2
             if gamma == 0:
                 gamma = 1
 
-        vals = np.ones_like(image)
+        vals = np.ones_like(image_work)
         vals *= np.exp(-(r_b**2) / (2 * beta**2))
         vals *= 1.0 - np.exp(-(s**2) / (2 * gamma**2))
-        vals *= mask_arr
+        vals *= mask_work
 
         filtered_max = np.maximum(filtered_max, vals)
 
-    return filtered_max
+    return np.moveaxis(filtered_max, 2, slice_axis)
