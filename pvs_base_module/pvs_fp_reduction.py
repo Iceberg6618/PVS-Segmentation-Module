@@ -22,7 +22,8 @@ class FPReduction:
     CSF/ventricle dilation is performed only in-plane. This matches the 2-D
     Frangi candidate generation and avoids suppressing candidates through thick
     slice direction. When ``csf_dilation_mm`` is ``None``, CSF is dilated by
-    exactly one in-plane voxel.
+    exactly one in-plane voxel. Ventricle dilation is controlled directly by
+    ``ventricle_dilation_voxels``.
     """
 
     def __init__(
@@ -34,7 +35,7 @@ class FPReduction:
         gm_mask: np.ndarray | None = None,
         ventricle_mask: np.ndarray | None = None,
         csf_dilation_mm: float | None = None,
-        ventricle_dilation_mm: float = 2.0,
+        ventricle_dilation_voxels: int = 1,
         min_area_mm2: float = 1.0,
         max_area_mm2: float = 12.0,
         gm_overlap_thres: float = 0.5,
@@ -42,6 +43,9 @@ class FPReduction:
     ):
         self.t2_nib = t2_nib
         self.voxel_size = np.array(t2_nib.header.get_zooms()[:3], dtype=float)
+        self.slice_axis = self._superior_inferior_axis(t2_nib)
+        self.inplane_axes = tuple(ax for ax in range(3) if ax != self.slice_axis)
+        self.inplane_shape = tuple(int(t2_nib.shape[ax]) for ax in self.inplane_axes)
 
         self.seg_array = (np.asarray(seg_array) > 0).astype(np.uint8)
         self.roi_mask = (np.asarray(roi_mask) > 0).astype(np.uint8)
@@ -51,7 +55,7 @@ class FPReduction:
         self.ventricle_mask = self._as_mask(ventricle_mask)
 
         self.csf_dilation_mm = csf_dilation_mm
-        self.ventricle_dilation_mm = ventricle_dilation_mm
+        self.ventricle_dilation_voxels = int(ventricle_dilation_voxels)
         self.min_area_mm2 = min_area_mm2
         self.max_area_mm2 = max_area_mm2
         self.gm_overlap_thres = gm_overlap_thres
@@ -59,6 +63,14 @@ class FPReduction:
 
         self._validate_shapes()
         self._set_area_thresholds()
+
+    @staticmethod
+    def _superior_inferior_axis(nii: nib.Nifti1Image) -> int:
+        try:
+            codes = np.array(nib.orientations.aff2axcodes(nii.affine))
+            return int(np.where((codes == "S") | (codes == "I"))[0][0])
+        except Exception:
+            return 2
 
     @staticmethod
     def _as_mask(mask: np.ndarray | None) -> np.ndarray | None:
@@ -80,7 +92,7 @@ class FPReduction:
             raise ValueError("Provide at least one of csf_mask, ventricle_mask, or gm_mask.")
 
     def _set_area_thresholds(self) -> None:
-        pix_area = float(np.prod(self.voxel_size[:2]))
+        pix_area = float(np.prod(self.voxel_size[list(self.inplane_axes)]))
         self.min_area_px = max(1, int(np.ceil(self.min_area_mm2 / pix_area)))
         self.max_area_px = int(np.floor(self.max_area_mm2 / pix_area))
         if self.max_area_px < self.min_area_px:
@@ -88,45 +100,59 @@ class FPReduction:
                 "max_area_mm2 is smaller than min_area_mm2 after voxel-size conversion."
             )
 
-    def _radius_px(self, radius_mm: float | None) -> int:
+    def _csf_radius_px(self, radius_mm: float | None) -> int:
         if radius_mm is None:
             return 1
         if radius_mm <= 0:
             return 0
-        return max(1, int(round(radius_mm / float(np.mean(self.voxel_size[:2])))))
+        return max(1, int(round(radius_mm / float(np.mean(self.voxel_size[list(self.inplane_axes)])))))
 
-    def _dilate_2d(self, mask: np.ndarray, radius_mm: float | None) -> np.ndarray:
-        radius_px = self._radius_px(radius_mm)
+    @staticmethod
+    def _voxel_radius_px(radius_voxels: int) -> int:
+        return max(0, int(radius_voxels))
+
+    def _dilate_2d(self, mask: np.ndarray, radius_px: int) -> np.ndarray:
         if radius_px == 0:
             return mask.astype(bool)
 
         structure = ndi.generate_binary_structure(2, 1)
         return ndi.binary_dilation(mask.astype(bool), structure=structure, iterations=radius_px)
 
+    def _take_slice(self, array: np.ndarray, slice_idx: int) -> np.ndarray:
+        return np.take(array, slice_idx, axis=self.slice_axis)
+
+    def _write_slice(self, array: np.ndarray, slice_idx: int, plane: np.ndarray) -> None:
+        index = [slice(None)] * array.ndim
+        index[self.slice_axis] = slice_idx
+        array[tuple(index)] = plane
+
     def _slice_exclusion_masks(self, slice_idx: int) -> tuple[np.ndarray, np.ndarray]:
         csf_vent_masks = []
         if self.csf_mask is not None:
             csf_vent_masks.append(
-                self._dilate_2d(self.csf_mask[:, :, slice_idx], self.csf_dilation_mm)
+                self._dilate_2d(
+                    self._take_slice(self.csf_mask, slice_idx),
+                    self._csf_radius_px(self.csf_dilation_mm),
+                )
             )
         if self.ventricle_mask is not None:
             csf_vent_masks.append(
                 self._dilate_2d(
-                    self.ventricle_mask[:, :, slice_idx],
-                    self.ventricle_dilation_mm,
+                    self._take_slice(self.ventricle_mask, slice_idx),
+                    self._voxel_radius_px(self.ventricle_dilation_voxels),
                 )
             )
 
         csf_vent = (
             np.logical_or.reduce(csf_vent_masks)
             if csf_vent_masks
-            else np.zeros(self.seg_array.shape[:2], dtype=bool)
+            else np.zeros(self.inplane_shape, dtype=bool)
         )
 
         gm = (
-            self.gm_mask[:, :, slice_idx].astype(bool)
+            self._take_slice(self.gm_mask, slice_idx).astype(bool)
             if self.gm_mask is not None
-            else np.zeros(self.seg_array.shape[:2], dtype=bool)
+            else np.zeros(self.inplane_shape, dtype=bool)
         )
         return csf_vent, gm
 
@@ -170,12 +196,13 @@ class FPReduction:
             )
 
         filtered = np.zeros_like(self.seg_array, dtype=np.uint8)
-        for idx in range(self.seg_array.shape[-1]):
+        for idx in range(self.seg_array.shape[self.slice_axis]):
             csf_vent_mask, gm_mask = self._slice_exclusion_masks(idx)
-            filtered[:, :, idx] = self._fp_comp_2d(
-                self.seg_array[:, :, idx],
+            filtered_slice = self._fp_comp_2d(
+                self._take_slice(self.seg_array, idx),
                 csf_vent_mask,
                 gm_mask,
             )
+            self._write_slice(filtered, idx, filtered_slice)
 
         return (filtered * self.roi_mask).astype(np.uint8)

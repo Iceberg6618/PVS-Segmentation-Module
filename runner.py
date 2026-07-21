@@ -43,6 +43,15 @@ def sigmas_mm_to_voxels(sigmas_mm, spacing: float) -> np.ndarray:
     return np.maximum(sigmas_vox, MIN_SIGMA_VOX)
 
 
+def get_superior_inferior_axis(nii: nib.Nifti1Image) -> int:
+    """Return the voxel axis corresponding to anatomical Superior-Inferior."""
+    try:
+        codes = np.array(nib.orientations.aff2axcodes(nii.affine))
+        return int(np.where((codes == "S") | (codes == "I"))[0][0])
+    except Exception:
+        return 2
+
+
 class PVSCandidateRunner:
     """
     Run preprocessing once, then generate BG and CSO PVS candidates separately.
@@ -80,7 +89,12 @@ class PVSCandidateRunner:
         self.save = save_all
         self.bg_thr = DEFAULT_BG_THR if bg_thr is None else bg_thr
         self.cso_thr = DEFAULT_CSO_THR if cso_thr is None else cso_thr
+        self.slice_axis = get_superior_inferior_axis(self.t2_nib)
         self.inplane_spacing = get_inplane_spacing(self.t2_nib)
+        print(
+            f"[PVS] Initialized runner | T2={os.path.basename(t2_path)} | "
+            f"SI axis={self.slice_axis} | in-plane spacing={self.inplane_spacing:.4f} mm | out={self.out_dir}"
+        )
 
     def run(
         self,
@@ -91,7 +105,7 @@ class PVSCandidateRunner:
         cso_thr: float | None = None,
         preproc_overwrite: bool = False,
     ) -> dict[str, np.ndarray]:
-        
+        print("[PVS] Candidate generation started.")
         preproc = self._run_preprocessing(preproc_overwrite=preproc_overwrite)
         bg_threshold, cso_threshold = self._resolve_thresholds(bg_thr, cso_thr)
         bg_mask = self._bg_mask(preproc)
@@ -115,6 +129,7 @@ class PVSCandidateRunner:
             threshold=cso_threshold,
         )
 
+        print("[PVS] Candidate generation done.")
         return {
             "BG": bg_result,
             "CSO": cso_result,
@@ -125,6 +140,7 @@ class PVSCandidateRunner:
 
     def _run_preprocessing(self, preproc_overwrite: bool) -> PVSPreprocessing:
         preproc_out = os.path.join(self.out_dir, "preproc")
+        print(f"[PVS] Preprocessing started | overwrite={preproc_overwrite} | out={preproc_out}")
         preproc = PVSPreprocessing(
             t2_nib=self.t2_nib,
             t1_nib=self.t1_nib,
@@ -132,6 +148,7 @@ class PVSCandidateRunner:
             overwrite=preproc_overwrite,
         )
         preproc.run_all_preprocesses()
+        print("[PVS] Preprocessing done.")
         return preproc
 
     @staticmethod
@@ -187,22 +204,30 @@ class PVSCandidateRunner:
         metadata = self._frangi_metadata(threshold, sigmas_mm, sigmas_vox)
 
         if os.path.exists(local_frangi_path) and self._frangi_metadata_matches(metadata_path, metadata):
+            print(f"[PVS] {region_name} raw_frangi exists. Loading file: {local_frangi_path}")
             frangi_filtered = nib.load(local_frangi_path).get_fdata()
         else:
+            print(
+                f"[PVS] {region_name} Frangi filtering started | "
+                f"sigmas_mm={sigmas_mm.tolist()} | sigmas_vox={sigmas_vox.tolist()} | threshold={threshold}"
+            )
             frangi_filtered = frangi2d(
                 image=self._normalised_array(preproc),
                 black_ridges=False,
                 sigmas=sigmas_vox,
                 mask=frangi_support_mask,
+                slice_axis=self.slice_axis,
             )
             if self.save:
                 self._save_nifti(frangi_filtered, local_frangi_path)
                 self._save_frangi_metadata(metadata_path, metadata)
+                print(f"[PVS] {region_name} raw_frangi saved: {local_frangi_path}")
 
         pvs_candidates = (frangi_filtered > threshold).astype(np.uint8)
         if self.save:
             self._save_nifti(region_mask, os.path.join(region_out, "roi_mask.nii.gz"))
             self._save_nifti(pvs_candidates, os.path.join(region_out, "pvs_candidates.nii.gz"))
+        print(f"[PVS] {region_name} candidate generation done | voxels={int(np.count_nonzero(pvs_candidates))}")
 
         return {
             "frangi": frangi_filtered,
@@ -266,13 +291,14 @@ class PVSSegRunner(PVSCandidateRunner):
         cso_thr: float | None = None,
         preproc_overwrite: bool = False,
         csf_dilation_mm: float | None = None,
-        ventricle_dilation_mm: float = 2.0,
+        ventricle_dilation_voxels: int = 1,
         cso_min_area_mm2: float = 1.0,
         cso_max_area_mm2: float = 12.0,
         bg_min_area_mm2: float = 1.5,
         bg_max_area_mm2: float = 18.0,
         bg_max_elongation: float | None = 5.0,
     ) -> dict[str, np.ndarray]:
+        print("[PVS] Full segmentation started.")
         preproc = self._run_preprocessing(preproc_overwrite=preproc_overwrite)
         bg_threshold, cso_threshold = self._resolve_thresholds(bg_thr, cso_thr)
         bg_mask = self._bg_mask(preproc)
@@ -302,7 +328,7 @@ class PVSSegRunner(PVSCandidateRunner):
             candidates=bg_result["pvs_candidates"],
             roi_mask=bg_mask,
             csf_dilation_mm=csf_dilation_mm,
-            ventricle_dilation_mm=ventricle_dilation_mm,
+            ventricle_dilation_voxels=ventricle_dilation_voxels,
             min_area_mm2=bg_min_area_mm2,
             max_area_mm2=bg_max_area_mm2,
             max_elongation=bg_max_elongation,
@@ -313,7 +339,7 @@ class PVSSegRunner(PVSCandidateRunner):
             candidates=cso_result["pvs_candidates"],
             roi_mask=cso_mask,
             csf_dilation_mm=csf_dilation_mm,
-            ventricle_dilation_mm=ventricle_dilation_mm,
+            ventricle_dilation_voxels=ventricle_dilation_voxels,
             min_area_mm2=cso_min_area_mm2,
             max_area_mm2=cso_max_area_mm2,
             max_elongation=None,
@@ -322,6 +348,7 @@ class PVSSegRunner(PVSCandidateRunner):
         segmentation_mask = ((bg_fp > 0) | (cso_fp > 0)).astype(np.uint8)
         if self.save:
             self._save_nifti(segmentation_mask, os.path.join(self.out_dir, "pvs_segmentation_mask.nii.gz"))
+        print(f"[PVS] Full segmentation done | final voxels={int(np.count_nonzero(segmentation_mask))}")
 
         bg_result["pvs_fp_reduced"] = bg_fp
         cso_result["pvs_fp_reduced"] = cso_fp
@@ -342,11 +369,15 @@ class PVSSegRunner(PVSCandidateRunner):
         candidates: np.ndarray,
         roi_mask: np.ndarray,
         csf_dilation_mm: float,
-        ventricle_dilation_mm: float,
+        ventricle_dilation_voxels: int,
         min_area_mm2: float,
         max_area_mm2: float,
         max_elongation: float | None,
     ) -> np.ndarray:
+        print(
+            f"[PVS] {region_name} FP reduction started | "
+            f"min_area={min_area_mm2}, max_area={max_area_mm2}, max_elongation={max_elongation}"
+        )
         fp_reduction = FPReduction(
             t2_nib=self.t2_nib,
             seg_array=candidates,
@@ -355,17 +386,18 @@ class PVSSegRunner(PVSCandidateRunner):
             gm_mask=preproc.gm_mask,
             ventricle_mask=preproc.ventricle_mask,
             csf_dilation_mm=csf_dilation_mm,
-            ventricle_dilation_mm=ventricle_dilation_mm,
+            ventricle_dilation_voxels=ventricle_dilation_voxels,
             min_area_mm2=min_area_mm2,
             max_area_mm2=max_area_mm2,
+            gm_overlap_thres=0.5,
             max_elongation=max_elongation,
         )
         fp_reduced = fp_reduction.run()
         if self.save:
-            self._save_nifti(
-                fp_reduced,
-                os.path.join(self.out_dir, region_name, "pvs_fp_reduced.nii.gz"),
-            )
+            out_path = os.path.join(self.out_dir, region_name, "pvs_fp_reduced.nii.gz")
+            self._save_nifti(fp_reduced, out_path)
+            print(f"[PVS] {region_name} FP-reduced mask saved: {out_path}")
+        print(f"[PVS] {region_name} FP reduction done | voxels={int(np.count_nonzero(fp_reduced))}")
         return fp_reduced
 
 if __name__ == "__main__":
