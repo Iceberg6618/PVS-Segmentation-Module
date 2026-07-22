@@ -11,7 +11,6 @@ anatomical exclusion masks, and slice-wise connected-component filtering.
 
 ## Requirements
 
-- Windows
 - Python 3.10
 - TensorFlow 2.10 for CPU
 - Native SynthSeg
