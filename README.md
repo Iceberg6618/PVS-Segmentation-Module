@@ -163,8 +163,8 @@ cso_thr = 0.003
 The default false-positive-reduction parameters are:
 
 ```python
-csf_dilation_mm = None          # one in-plane voxel
-ventricle_dilation_voxels = 1   # one in-plane voxel
+csf_dilation_voxels = 1        # one in-plane voxel
+ventricle_dilation_mm = 2.0     # converted to in-plane voxel iterations
 cso_min_area_mm2 = 1.0
 cso_max_area_mm2 = 12.0
 bg_min_area_mm2 = 1.5
@@ -223,8 +223,8 @@ result = runner.run(
     bg_thr=None,
     cso_thr=None,
     preproc_overwrite=False,
-    csf_dilation_mm=None,
-    ventricle_dilation_voxels=1,
+    csf_dilation_voxels=1,
+    ventricle_dilation_mm=2.0,
     cso_min_area_mm2=1.0,
     cso_max_area_mm2=12.0,
     bg_min_area_mm2=1.5,
@@ -261,8 +261,8 @@ result = runner.run(
 
 | Parameter | Default | Description |
 | --- | --- | --- |
-| `csf_dilation_mm` | `None` | CSF mask dilation before exclusion. `None` means exactly one in-plane voxel. A value of `0` disables CSF dilation. A positive value is converted from millimeters to in-plane voxel iterations using the mean in-plane spacing. |
-| `ventricle_dilation_voxels` | `1` | Ventricle mask dilation before exclusion, directly specified as in-plane voxel iterations. `0` disables ventricle dilation. This is not converted from millimeters. |
+| `csf_dilation_voxels` | `1` | CSF mask dilation before exclusion, directly specified as in-plane voxel iterations. `0` disables CSF dilation. |
+| `ventricle_dilation_mm` | `2.0` | Ventricle mask dilation before exclusion. This value is converted from millimeters to in-plane voxel iterations using the mean in-plane spacing. `0` disables ventricle dilation. |
 | `cso_min_area_mm2` | `1.0` | Minimum allowed 2D connected-component area for CSO candidates. Components smaller than this are removed. |
 | `cso_max_area_mm2` | `12.0` | Maximum allowed 2D connected-component area for CSO candidates. Components larger than this are removed. |
 | `bg_min_area_mm2` | `1.5` | Minimum allowed 2D connected-component area for BG candidates. BG defaults are slightly larger because BG PVS are often thicker than CSO PVS. |
@@ -294,8 +294,8 @@ directly when candidate masks already exist.
 - Larger `bg_sigmas` or `cso_sigmas` emphasize thicker, tube-like structures.
 - Smaller sigmas emphasize thinner structures but can increase noise-like
   candidates.
-- Larger `csf_dilation_mm` removes more candidates near sulci and CSF spaces.
-- Larger `ventricle_dilation_voxels` removes more candidates near ventricles and
+- Larger `csf_dilation_voxels` removes more candidates near sulci and CSF spaces.
+- Larger `ventricle_dilation_mm` removes more candidates near ventricles and
   periventricular regions.
 - Increasing `min_area_mm2` removes more small components.
 - Decreasing `max_area_mm2` removes more large components that may represent

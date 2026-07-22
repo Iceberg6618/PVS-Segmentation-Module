@@ -1,4 +1,4 @@
-﻿"""Runners for region-specific PVS segmentation."""
+"""Runners for region-specific PVS segmentation."""
 
 from __future__ import annotations
 
@@ -290,8 +290,8 @@ class PVSSegRunner(PVSCandidateRunner):
         bg_thr: float | None = None,
         cso_thr: float | None = None,
         preproc_overwrite: bool = False,
-        csf_dilation_mm: float | None = None,
-        ventricle_dilation_voxels: int = 1,
+        csf_dilation_voxels: int = 1,
+        ventricle_dilation_mm: float = 2.0,
         cso_min_area_mm2: float = 1.0,
         cso_max_area_mm2: float = 12.0,
         bg_min_area_mm2: float = 1.5,
@@ -327,8 +327,8 @@ class PVSSegRunner(PVSCandidateRunner):
             region_name="BG",
             candidates=bg_result["pvs_candidates"],
             roi_mask=bg_mask,
-            csf_dilation_mm=csf_dilation_mm,
-            ventricle_dilation_voxels=ventricle_dilation_voxels,
+            csf_dilation_voxels=csf_dilation_voxels,
+            ventricle_dilation_mm=ventricle_dilation_mm,
             min_area_mm2=bg_min_area_mm2,
             max_area_mm2=bg_max_area_mm2,
             max_elongation=bg_max_elongation,
@@ -338,8 +338,8 @@ class PVSSegRunner(PVSCandidateRunner):
             region_name="CSO",
             candidates=cso_result["pvs_candidates"],
             roi_mask=cso_mask,
-            csf_dilation_mm=csf_dilation_mm,
-            ventricle_dilation_voxels=ventricle_dilation_voxels,
+            csf_dilation_voxels=csf_dilation_voxels,
+            ventricle_dilation_mm=ventricle_dilation_mm,
             min_area_mm2=cso_min_area_mm2,
             max_area_mm2=cso_max_area_mm2,
             max_elongation=None,
@@ -368,8 +368,8 @@ class PVSSegRunner(PVSCandidateRunner):
         region_name: str,
         candidates: np.ndarray,
         roi_mask: np.ndarray,
-        csf_dilation_mm: float,
-        ventricle_dilation_voxels: int,
+        csf_dilation_voxels: int,
+        ventricle_dilation_mm: float,
         min_area_mm2: float,
         max_area_mm2: float,
         max_elongation: float | None,
@@ -385,8 +385,8 @@ class PVSSegRunner(PVSCandidateRunner):
             csf_mask=preproc.csf_mask,
             gm_mask=preproc.gm_mask,
             ventricle_mask=preproc.ventricle_mask,
-            csf_dilation_mm=csf_dilation_mm,
-            ventricle_dilation_voxels=ventricle_dilation_voxels,
+            csf_dilation_voxels=csf_dilation_voxels,
+            ventricle_dilation_mm=ventricle_dilation_mm,
             min_area_mm2=min_area_mm2,
             max_area_mm2=max_area_mm2,
             gm_overlap_thres=0.5,
@@ -402,4 +402,3 @@ class PVSSegRunner(PVSCandidateRunner):
 
 if __name__ == "__main__":
     pass
-

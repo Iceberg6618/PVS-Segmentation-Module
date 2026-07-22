@@ -21,9 +21,10 @@ class FPReduction:
 
     CSF/ventricle dilation is performed only in-plane. This matches the 2-D
     Frangi candidate generation and avoids suppressing candidates through thick
-    slice direction. When ``csf_dilation_mm`` is ``None``, CSF is dilated by
-    exactly one in-plane voxel. Ventricle dilation is controlled directly by
-    ``ventricle_dilation_voxels``.
+    slice direction. CSF dilation is controlled directly by
+    `csf_dilation_voxels`. Ventricle dilation is controlled by
+    `ventricle_dilation_mm` and converted to in-plane voxel iterations from
+    the mean in-plane spacing.
     """
 
     def __init__(
@@ -34,8 +35,8 @@ class FPReduction:
         csf_mask: np.ndarray | None = None,
         gm_mask: np.ndarray | None = None,
         ventricle_mask: np.ndarray | None = None,
-        csf_dilation_mm: float | None = None,
-        ventricle_dilation_voxels: int = 1,
+        csf_dilation_voxels: int = 1,
+        ventricle_dilation_mm: float = 2.0,
         min_area_mm2: float = 1.0,
         max_area_mm2: float = 12.0,
         gm_overlap_thres: float = 0.5,
@@ -54,8 +55,8 @@ class FPReduction:
         self.gm_mask = self._as_mask(gm_mask)
         self.ventricle_mask = self._as_mask(ventricle_mask)
 
-        self.csf_dilation_mm = csf_dilation_mm
-        self.ventricle_dilation_voxels = int(ventricle_dilation_voxels)
+        self.csf_dilation_voxels = int(csf_dilation_voxels)
+        self.ventricle_dilation_mm = float(ventricle_dilation_mm)
         self.min_area_mm2 = min_area_mm2
         self.max_area_mm2 = max_area_mm2
         self.gm_overlap_thres = gm_overlap_thres
@@ -100,12 +101,11 @@ class FPReduction:
                 "max_area_mm2 is smaller than min_area_mm2 after voxel-size conversion."
             )
 
-    def _csf_radius_px(self, radius_mm: float | None) -> int:
-        if radius_mm is None:
-            return 1
+    def _mm_radius_px(self, radius_mm: float) -> int:
         if radius_mm <= 0:
             return 0
-        return max(1, int(round(radius_mm / float(np.mean(self.voxel_size[list(self.inplane_axes)])))))
+        inplane_spacing = float(np.mean(self.voxel_size[list(self.inplane_axes)]))
+        return max(1, int(round(radius_mm / inplane_spacing)))
 
     @staticmethod
     def _voxel_radius_px(radius_voxels: int) -> int:
@@ -132,14 +132,14 @@ class FPReduction:
             csf_vent_masks.append(
                 self._dilate_2d(
                     self._take_slice(self.csf_mask, slice_idx),
-                    self._csf_radius_px(self.csf_dilation_mm),
+                    self._voxel_radius_px(self.csf_dilation_voxels),
                 )
             )
         if self.ventricle_mask is not None:
             csf_vent_masks.append(
                 self._dilate_2d(
                     self._take_slice(self.ventricle_mask, slice_idx),
-                    self._voxel_radius_px(self.ventricle_dilation_voxels),
+                    self._mm_radius_px(self.ventricle_dilation_mm),
                 )
             )
 
